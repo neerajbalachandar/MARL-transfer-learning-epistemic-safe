@@ -1,5 +1,8 @@
 antlr4-python3-runtime==4.9.3
 av==13.1.0
+matplotlib>=3.8,<4
+moviepy>=1.0,<2
+tensorboard>=2.14,<3
 -e git+https://github.com/facebookresearch/BenchMARL.git@65d649d80e0bdcbdbe2c5d6a3f02dbfed8f0bec1#egg=benchmarl
 cloudpickle==3.1.2
 cuda-bindings==13.4.4
@@ -35,7 +38,7 @@ nvidia-nvtx==13.0.85
 omegaconf==2.3.1
 orjson==3.13.0
 packaging==26.3
-pillow==12.3.0
+pillow==11.3.0
 pyglet==1.5.27
 pyvers==0.2.3
 PyYAML==6.0.3

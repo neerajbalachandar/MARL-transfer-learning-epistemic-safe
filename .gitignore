@@ -1,1 +1,14 @@
 venv/
+.venv/
+outputs/
+checkpoints/
+videos/
+*.pt
+*.mp4
+*.gif
+results/figures/
+results/evaluation/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.tmp

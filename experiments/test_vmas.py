@@ -3,6 +3,7 @@ import vmas
 
 
 def main():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Create 4 parallel simulation environments.
     # Each environment contains 3 cooperative agents.
@@ -11,7 +12,7 @@ def main():
         scenario="navigation",
         num_envs=4,
         n_agents=3,
-        device="cpu",
+        device=device,
         continuous_actions=True,
         max_steps=100,
         seed=0,
