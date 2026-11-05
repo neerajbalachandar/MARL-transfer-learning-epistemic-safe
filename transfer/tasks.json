@@ -1,0 +1,44 @@
+{
+  "starts": [
+    [-0.75, -0.5],
+    [-0.75, 0.0],
+    [-0.75, 0.5]
+  ],
+  "goal_x": 0.75,
+  "goal_y": {
+    "T0": [-0.5, 0.0, 0.5],
+    "T1a": [0.0, -0.5, 0.5],
+    "T1b": [-0.5, 0.5, 0.0],
+    "T1c": [0.5, 0.0, -0.5],
+    "T2": [0.0, 0.5, -0.5]
+  },
+  "position_jitter": 0.03,
+  "environment": {
+    "max_steps": 100,
+    "n_agents": 3,
+    "collisions": true,
+    "agents_with_same_goal": 1,
+    "observe_all_goals": false,
+    "shared_rew": true,
+    "split_goals": false,
+    "lidar_range": 0.35,
+    "agent_radius": 0.1
+  },
+  "experiments": {
+    "maptf": {
+      "source_task": "T2",
+      "target_task": "T2"
+    },
+    "bayesian_reuse": {
+      "source_tasks": ["T1a", "T1b"],
+      "target_task": "T2"
+    },
+    "portal": {
+      "initial_task": "T0",
+      "candidate_tasks": ["T1a", "T1b", "T1c", "T2"],
+      "target_task": "T2",
+      "manual_sequence": ["T0", "T1a", "T2"],
+      "scratch_sequence": ["T2"]
+    }
+  }
+}

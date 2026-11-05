@@ -83,3 +83,41 @@ Plots are saved as high-resolution PNG and PDF files under `results/figures/<run
 ## Output and version control
 
 Experiment outputs, checkpoints, generated videos, and figures are ignored by Git so local runs are preserved without adding large artifacts to source control. Source code, dependencies, and documentation remain tracked.
+
+## Transfer experiments
+
+The three transfer experiments share the same small VMAS task family in `transfer/navigation.py`. Goal layouts, fixed environment settings and each method's source/target task names live in `transfer/tasks.json`. T0, T1a, T1b, T1c and T2 change only the three agents' goal assignments; each reset adds seeded position jitter of at most 0.03. Agent count, observations, actions, reward, sensing and physics remain the navigation baseline.
+
+Run source training before the transfer comparisons:
+
+```bash
+python experiments/train_transfer_task.py T1a --seed 0 --frames 600000
+python experiments/train_transfer_task.py T1b --seed 0 --frames 600000
+python experiments/train_transfer_task.py T2 --seed 0 --frames 600000
+```
+
+Use a competent T2 checkpoint for the MAPTF-style same-task experiment, and T1a/T1b checkpoints for Bayesian reuse:
+
+```bash
+python experiments/transfer_maptf.py outputs/T2/seed_0/<run>/checkpoints/checkpoint_600000.pt
+python experiments/transfer_bayesian_reuse.py \
+  outputs/T1a/seed_0/<run>/checkpoints/checkpoint_600000.pt \
+  outputs/T1b/seed_0/<run>/checkpoints/checkpoint_600000.pt
+python experiments/transfer_portal.py --mode portal
+```
+
+BenchMARL places each checkpoint in a generated run folder under the output directory. Find the exact path with `find outputs -name 'checkpoint_*.pt'`. All transfer runners accept `--frames`, `--seed`, `--output`, and `--device`; the Bayesian runner also accepts `--selection bayes|random|fixed-a|fixed-b|oracle`. The portal runner supports `portal`, `difficulty`, `manual`, and `scratch` comparisons. They write a `manifest.json` and a compact held-out `evaluation.json` beside their run logs.
+
+The implementation is deliberately a first pilot. The MAPTF runner uses a frozen peer actor library, a simple online return bandit and a learned reward-change termination classifier. This is labeled MAPTF-style because it does not port the paper's SRO option-value update or execute temporally extended environment options. Bayesian reuse uses return/success/contact likelihoods and a BPR expected-improvement selector; it is not Bayes-ToMoP. PORTAL uses fixed-dimension Gaussian mixtures and actor-only transfer; ERFN is not included. Portal stages currently use fixed frame caps and record competence scores rather than implementing the paper's two-consecutive-evaluation stopping rule. These limits are included in each run manifest.
+
+The default evaluation uses 100 held-out T2 episodes; set `--eval-episodes` in MAPTF/Bayesian/PORTAL commands to change that cost. `train_transfer_task.py` trains one source task. Use at least five training seeds for final comparisons; the default single seed and 600k frames are pilot settings, not final reported results.
+
+For PORTAL main runs, first use a pilot to record the `difficulty_interval` in its manifest. Freeze those bounds for every main seed with `--difficulty-band LOW HIGH`. The CLI computes 25th/75th percentile bounds when this option is omitted.
+
+After running all seed folders, compare their held-out metrics with:
+
+```bash
+python visualization/plot_transfer.py outputs
+```
+
+This writes one compact success, return and contact comparison figure in PNG and PDF under `results/figures/`.
