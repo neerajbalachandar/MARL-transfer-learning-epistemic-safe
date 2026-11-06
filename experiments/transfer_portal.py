@@ -17,8 +17,10 @@ from transfer.experiment import (
     make_experiment,
     probe_policy,
     summarize_probe,
+    write_episode_records,
+    write_run_manifest,
 )
-from transfer.methods import moderate_candidates, portal_gmm_similarity
+from transfer.methods import moderate_candidates, portal_aligned_mean_distance_similarity
 from transfer.navigation import EXPERIMENTS
 
 
@@ -29,6 +31,8 @@ def main():
     parser.add_argument("--frames-per-stage", type=int, default=600_000)
     parser.add_argument("--probe-episodes", type=int, default=100)
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument("--eval-interval", type=int, default=120_000)
+    parser.add_argument("--validation-episodes", type=int, default=32)
     parser.add_argument("--competence-episodes", type=int, default=100)
     parser.add_argument("--success-threshold", type=float, default=0.8)
     parser.add_argument(
@@ -81,7 +85,20 @@ def main():
             previous_checkpoint = args.resume_checkpoint
         else:
             experiment = make_experiment(
-                task_name, args.seed, args.frames_per_stage, stage_dir, args.device
+                task_name,
+                args.seed,
+                args.frames_per_stage,
+                stage_dir,
+                args.device,
+                method=f"portal_pilot_{args.mode}",
+                source_tasks=[previous.task.name] if previous is not None else [],
+                policy_initialization=(
+                    f"actor_only:{previous.task.name}"
+                    if previous is not None
+                    else "random"
+                ),
+                evaluation_interval=args.eval_interval,
+                evaluation_episodes=args.validation_episodes,
             )
             if previous is not None:
                 copy_actor_weights(previous, experiment)
@@ -153,7 +170,7 @@ def main():
                 for count in sorted(set((3, 5, 8, args.components))):
                     if min(len(observation_sets[candidate]), len(target_observations)) < count:
                         continue
-                    score = portal_gmm_similarity(
+                    score = portal_aligned_mean_distance_similarity(
                         observation_sets[candidate].numpy(),
                         target_observations,
                         components=count,
@@ -199,7 +216,10 @@ def main():
 
     manifest = {
         "method": args.mode,
+        "method_id": f"portal_pilot_{args.mode}",
         "seed": args.seed,
+        "evaluation_interval_environment_frames": args.eval_interval,
+        "validation_episodes_per_evaluation": args.validation_episodes,
         "stage_frame_cap": args.frames_per_stage,
         "difficulty_band": args.difficulty_band,
         "target_task": method["target_task"],
@@ -220,6 +240,16 @@ def main():
             previous, method["target_task"], 900_000 + args.seed, args.eval_episodes
         )
         manifest["final_evaluation"] = summarize_probe(final_rows)
+        write_episode_records(
+            args.output / "evaluation" / "test_episodes.jsonl",
+            final_rows,
+            method=f"portal_pilot_{args.mode}",
+            task=method["target_task"],
+            training_seed=args.seed,
+            evaluation_seed=900_000 + args.seed,
+            environment_frames=int(previous.total_frames),
+            split="test",
+        )
         manifest["held_out_evaluation_frames"] = args.eval_episodes * 100
         manifest["total_target_training_frames"] = sum(
             row["training_frames"] for row in history if row["task"] == method["target_task"]
@@ -233,7 +263,8 @@ def main():
         (args.output / "evaluation.json").write_text(
             json.dumps(manifest["final_evaluation"], indent=2) + "\n"
         )
-    (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        write_run_manifest(previous, completed=True, extra=manifest)
+        (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -54,6 +54,32 @@ def bayes_update(prior, log_likelihood):
     return posterior
 
 
+def calibrated_bayes_update(prior, log_likelihood, probability_floor=1e-9):
+    """Stable posterior update with a documented floor on prior mass.
+
+    A zero prior remains impossible under the ordinary update. This calibrated
+    variant instead floors and renormalizes the prior before observing the new
+    evidence; the floor is explicit so a hypothesis cannot disappear forever.
+    """
+    prior = torch.as_tensor(prior, dtype=torch.float64)
+    log_likelihood = torch.as_tensor(log_likelihood, dtype=torch.float64)
+    if prior.ndim != 1 or prior.shape != log_likelihood.shape:
+        raise ValueError("prior and log_likelihood must be matching 1D tensors")
+    if probability_floor <= 0 or probability_floor >= 1 / prior.numel():
+        raise ValueError("probability_floor must be positive and smaller than 1 / hypotheses")
+    if torch.any(prior < 0) or not torch.isfinite(prior).all() or prior.sum() <= 0:
+        raise ValueError("prior must be finite, non-negative, and have positive mass")
+    if torch.isnan(log_likelihood).any() or torch.isposinf(log_likelihood).any():
+        raise ValueError("log likelihoods may be finite or -inf, but not NaN or +inf")
+    prior = prior.clamp_min(probability_floor)
+    prior = prior / prior.sum()
+    log_weight = prior.log() + log_likelihood
+    if torch.isneginf(log_weight).all():
+        raise ValueError("all hypotheses have zero likelihood for this observation")
+    posterior = torch.softmax(log_weight, dim=0)
+    return posterior / posterior.sum()
+
+
 def gaussian_log_likelihood(value, mean, variance, variance_floor=1e-3):
     """Gaussian log likelihood with a floor for small validation variances."""
     variance = torch.as_tensor(variance).clamp_min(variance_floor)
@@ -71,6 +97,73 @@ def signal_log_likelihood(signal, model, variance_floor=1e-3):
         observed = torch.as_tensor(signal[key], dtype=probability.dtype)
         result = result + observed * probability.log() + (1 - observed) * torch.log1p(-probability)
     return result
+
+
+def summarize_joint_signals(records, dirichlet_alpha=0.5, variance_floor=1e-3):
+    """Fit a joint model of (return, success, contact) without independence.
+
+    Success/contact patterns are modeled jointly as four categorical outcomes.
+    Return is modeled by a Gaussian conditional on that joint outcome. Sparse
+    patterns back off to the overall return distribution.
+    """
+    if not records:
+        raise ValueError("at least one validation record is required")
+    if dirichlet_alpha <= 0:
+        raise ValueError("dirichlet_alpha must be positive")
+    returns = torch.tensor([row["return"] for row in records], dtype=torch.float64)
+    patterns = torch.tensor(
+        [int(bool(row["success"])) * 2 + int(bool(row["contact"])) for row in records],
+        dtype=torch.long,
+    )
+    counts = torch.bincount(patterns, minlength=4).to(torch.float64)
+    pattern_probabilities = (counts + dirichlet_alpha) / (
+        counts.sum() + 4 * dirichlet_alpha
+    )
+    global_mean = float(returns.mean())
+    global_variance = float(returns.var(unbiased=False).clamp_min(variance_floor))
+    conditional = []
+    for pattern in range(4):
+        values = returns[patterns == pattern]
+        if values.numel() < 2:
+            mean, variance = global_mean, global_variance
+        else:
+            mean = float(values.mean())
+            variance = float(values.var(unbiased=False).clamp_min(variance_floor))
+        conditional.append({"return_mean": mean, "return_variance": variance})
+    return {
+        "pattern_probabilities": pattern_probabilities.tolist(),
+        "conditional_return": conditional,
+        "dirichlet_alpha": float(dirichlet_alpha),
+        "variance_floor": float(variance_floor),
+        "model": "joint categorical(success,contact) and conditional Gaussian(return)",
+    }
+
+
+def joint_signal_log_likelihood(signal, model, probability_floor=1e-9):
+    """Evaluate a signal under the correlated rollout-feature model."""
+    pattern = int(bool(signal["success"])) * 2 + int(bool(signal["contact"]))
+    probabilities = torch.as_tensor(model["pattern_probabilities"], dtype=torch.float64)
+    probability = probabilities[pattern].clamp_min(probability_floor)
+    conditional = model["conditional_return"][pattern]
+    return probability.log() + gaussian_log_likelihood(
+        signal["return"],
+        conditional["return_mean"],
+        conditional["return_variance"],
+        model.get("variance_floor", 1e-3),
+    )
+
+
+def belief_information_gain(prior, posterior):
+    """Return entropy reduction in nats from a probe batch."""
+    prior = torch.as_tensor(prior, dtype=torch.float64).clamp_min(1e-12)
+    posterior = torch.as_tensor(posterior, dtype=torch.float64).clamp_min(1e-12)
+    if prior.shape != posterior.shape:
+        raise ValueError("prior and posterior shapes differ")
+    prior = prior / prior.sum()
+    posterior = posterior / posterior.sum()
+    entropy_before = -(prior * prior.log()).sum()
+    entropy_after = -(posterior * posterior.log()).sum()
+    return float((entropy_before - entropy_after).item())
 
 
 def bpr_expected_improvement(belief, utility_mean, utility_std):
@@ -106,8 +199,12 @@ def moderate_candidates(scores, fixed_interval=None):
     return [closest], {"lower": float(low), "upper": float(high), "fallback": True}
 
 
-def portal_gmm_similarity(candidate_observations, target_observations, components=5, reg=1e-4):
-    """PORTAL-style aligned Gaussian KL upper-bound score (higher is better)."""
+def portal_aligned_mean_distance_similarity(candidate_observations, target_observations, components=5, reg=1e-4):
+    """Negative aligned component-mean distance proxy (higher is more similar).
+
+    This is not a GMM KL divergence. Mixture weights and covariance differences
+    only affect component matching, not the final score.
+    """
     from itertools import permutations
     import numpy as np
 
@@ -171,9 +268,13 @@ def portal_gmm_similarity(candidate_observations, target_observations, component
     )
     rows, cols = np.arange(components), np.asarray(assignment)
     weights = (first_weights[rows] + second_weights[cols]) / 2
-    bound = 0.0
+    distance = 0.0
     for i, j, weight in zip(rows, cols, weights):
         delta = first_means[i] - second_means[j]
         covariance = (first_covariances[i] + second_covariances[j]) / 2
-        bound += 0.5 * weight * (delta @ np.linalg.solve(covariance, delta))
-    return -float(bound)
+        distance += weight * (delta @ np.linalg.solve(covariance, delta))
+    return -float(distance)
+
+
+# Kept for older experiment outputs and scripts. New code uses the precise name.
+portal_gmm_similarity = portal_aligned_mean_distance_similarity

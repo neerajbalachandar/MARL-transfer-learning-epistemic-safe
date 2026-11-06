@@ -130,3 +130,28 @@ python visualization/plot_transfer.py outputs
 ```
 
 This writes one compact success, return and contact comparison figure in PNG and PDF under `results/figures/`.
+
+## Research evaluation and plots
+
+Every training evaluation now also writes per-episode validation rows to `evaluation/validation_episodes.jsonl`; held-out evaluation writes `evaluation/test_episodes.jsonl`. Run settings and dependency versions are saved in `manifest.json`. The shared records include return, team and per-agent success, timeout, collision-reward condition, contact, overlap, clearances, and trajectories.
+
+Evaluate source policies on the same five-task test seed set. Pass multiple checkpoints per task for independent training seeds. To calculate zero-shot gain, also provide a separately trained scratch checkpoint for every target task:
+
+```bash
+python experiments/evaluate_source_target_matrix.py \
+  --checkpoint T0=PATH --checkpoint T1a=PATH --checkpoint T1b=PATH \
+  --checkpoint T1c=PATH --checkpoint T2=PATH \
+  --scratch-checkpoint T0=PATH --scratch-checkpoint T1a=PATH \
+  --scratch-checkpoint T1b=PATH --scratch-checkpoint T1c=PATH \
+  --scratch-checkpoint T2=PATH
+```
+
+Generate the plots available from raw run data with:
+
+```bash
+python visualization/plot_research.py outputs --output results/figures/research
+```
+
+This writes available PNG and PDF learning curves, zero-shot matrices, BPR belief traces, safety distributions, and trajectory plots. Missing data are reported as unavailable. A valid transfer-gain matrix needs scratch baseline rows. The script uses the training-seed variation for intervals; episode variation from one policy is not treated as independent training runs.
+
+The modules `transfer/epistemic.py` and `transfer/safety.py` are isolated research utilities: the first checks explicit finite possible-world sets, and the second scales nominal actions against a one-step geometric prediction. Neither is integrated into training. The latter is not a formal safety guarantee. MAPTF and PORTAL remain pilots; consult [the implementation audit](docs/implementation_audit.md), [algorithm mapping](docs/algorithm_mapping.md), [evaluation protocol](docs/evaluation_protocol.md), and [plot catalog](docs/plot_catalog.md) for exact limits and references.

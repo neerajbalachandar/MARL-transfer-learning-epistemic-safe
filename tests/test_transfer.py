@@ -13,6 +13,8 @@ from transfer.methods import (
     portal_gmm_similarity,
     termination_probability,
 )
+from transfer.epistemic import action_is_known_safe, information_set, knows
+from transfer.safety import filter_actions, predict_positions
 from transfer.experiment import assert_policy_compatible, checkpoint_hash, copy_actor_weights
 from transfer.navigation import TASK_GOALS, make_task
 
@@ -114,3 +116,70 @@ def test_portal_difficulty_fallback_and_gmm_alignment():
     observations = torch.arange(90, dtype=torch.float32).reshape(30, 3).numpy()
     score = portal_gmm_similarity(observations, observations, components=3)
     assert abs(score) < 1e-5
+
+
+def test_epistemic_knowledge_requires_truth_in_all_matching_worlds():
+    worlds = [
+        {"local": "same", "distance": 1.0},
+        {"local": "same", "distance": 0.2},
+        {"local": "other", "distance": 0.1},
+    ]
+    observation = lambda world: world["local"]
+    safe = lambda world: world["distance"] > 0.5
+    assert information_set(worlds, worlds[0], observation) == tuple(worlds[:2])
+    assert not knows(worlds, worlds[0], observation, safe)
+    assert not action_is_known_safe(worlds, worlds[0], observation, "move", lambda w, a: safe(w))
+    assert knows(worlds, worlds[2], observation, safe) is False
+
+
+def test_geometric_shield_predicts_and_reports_feasible_intervention():
+    positions = torch.tensor([[-0.08, 0.0], [0.08, 0.0]])
+    velocities = torch.zeros_like(positions)
+    actions = torch.tensor([[1.0, 0.0], [-1.0, 0.0]])
+    predicted = predict_positions(positions, velocities, actions)
+    assert predicted[0, 0] > positions[0, 0]
+    result = filter_actions(positions, velocities, actions, [0.05, 0.05], margin=0.055)
+    assert result.feasible
+    assert result.intervened
+    assert result.minimum_predicted_clearance >= 0.055
+    assert torch.all(result.actions.abs() <= 1)
+
+
+def test_geometric_shield_marks_unavoidable_momentum_as_infeasible():
+    positions = torch.tensor([[-0.1, 0.0], [0.1, 0.0]])
+    velocities = torch.tensor([[1.0, 0.0], [-1.0, 0.0]])
+    result = filter_actions(positions, velocities, torch.zeros_like(positions), [0.1, 0.1], margin=0.02)
+    assert not result.feasible
+    assert torch.equal(result.actions, torch.zeros_like(positions))
+
+
+def test_plotting_uses_actual_episode_records(tmp_path):
+    from visualization.plot_research import _curves, source_target_matrix, transfer_efficiency
+    records = []
+    for seed, value in ((0, 0.2), (1, 0.4)):
+        records.append({
+            "team_success": value,
+            "undiscounted_team_return": 2.0 + value,
+            "collision_episode": False,
+            "contact_episode": False,
+            "minimum_surface_clearance": 0.1,
+            "environment_frames": 100,
+            "training_seed": seed,
+            "task": "T2",
+            "method": "scratch",
+        })
+    assert _curves(records, "success", "test", tmp_path, "success", task="T2")
+    assert transfer_efficiency(
+        records + [
+            dict(records[0], environment_frames=50, team_success=False),
+            dict(records[1], environment_frames=50, team_success=False),
+        ],
+        tmp_path,
+    )
+    assert (tmp_path / "success.png").exists() and (tmp_path / "success.pdf").exists()
+    matrix_root = tmp_path / "matrix"
+    matrix_root.mkdir()
+    (matrix_root / "source_target_episodes.jsonl").write_text(
+        '{"source_task":"T2","target_task":"T2","team_success":true}\n'
+    )
+    assert source_target_matrix(matrix_root, tmp_path)

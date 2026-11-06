@@ -16,6 +16,8 @@ from transfer.experiment import (
     make_experiment,
     probe_policy,
     summarize_probe,
+    write_episode_records,
+    write_run_manifest,
 )
 from transfer.maptf import MAPTFExperiment
 from transfer.navigation import EXPERIMENTS
@@ -29,6 +31,8 @@ def main():
     parser.add_argument("--transfer-weight", type=float, default=0.1)
     parser.add_argument("--condition", choices=("adaptive", "fixed"), default="adaptive")
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument("--eval-interval", type=int, default=120_000)
+    parser.add_argument("--validation-episodes", type=int, default=32)
     parser.add_argument("--source-eval-episodes", type=int, default=100)
     parser.add_argument("--source-success-threshold", type=float, default=0.8)
     parser.add_argument("--output", type=Path, default=None)
@@ -71,6 +75,11 @@ def main():
                     "transfer_weight": args.transfer_weight,
                     "adaptive": args.condition == "adaptive",
                 },
+                method=f"maptf_pilot_{args.condition}",
+                source_tasks=[method["source_task"]],
+                policy_initialization="random; frozen source actors used as peer library",
+                evaluation_interval=args.eval_interval,
+                evaluation_episodes=args.validation_episodes,
             )
             manifest = {
                 "method": f"MAPTF-style {args.condition} peer imitation pilot",
@@ -127,6 +136,17 @@ def main():
                     experiment, method["target_task"], 900_000 + args.seed, args.eval_episodes
                 )
                 manifest["final_evaluation"] = summarize_probe(evaluation_rows)
+                write_episode_records(
+                    args.output / "evaluation" / "test_episodes.jsonl",
+                    evaluation_rows,
+                    method=f"maptf_pilot_{args.condition}",
+                    task=method["target_task"],
+                    training_seed=args.seed,
+                    evaluation_seed=900_000 + args.seed,
+                    environment_frames=int(experiment.total_frames),
+                    split="test",
+                )
+                write_run_manifest(experiment, completed=True, extra=manifest)
                 manifest["target_training_frames"] = int(experiment.total_frames)
                 manifest["held_out_evaluation_frames"] = args.eval_episodes * 100
                 manifest["total_target_interaction_frames"] = (

@@ -1,6 +1,9 @@
-"""Small BenchMARL helpers for training and actor-only checkpoint transfer."""
+"""Shared BenchMARL training, evaluation, and checkpoint helpers."""
 
+import json
+import importlib
 from pathlib import Path
+import subprocess
 
 import torch
 from torchrl.envs import Compose, TransformedEnv
@@ -8,10 +11,11 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from benchmarl.algorithms import MappoConfig
 from benchmarl.experiment import Experiment, ExperimentConfig
+from benchmarl.experiment.callback import Callback
 from benchmarl.models.mlp import MlpConfig
 
-from transfer.navigation import make_task
-from evaluation.success_rate import goal_hits
+from transfer.navigation import TASK_CONFIG, make_task
+from evaluation.metrics import episode_metrics, summarize_episodes
 
 
 def make_experiment(
@@ -23,6 +27,12 @@ def make_experiment(
     callbacks=None,
     experiment_class=Experiment,
     experiment_kwargs=None,
+    method="mappo",
+    source_tasks=None,
+    policy_initialization="random",
+    evaluation_interval=120_000,
+    evaluation_episodes=32,
+    validation_seed=None,
 ):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     config = ExperimentConfig.get_from_yaml()
@@ -32,10 +42,14 @@ def make_experiment(
     config.share_policy_params = False
     config.prefer_continuous_actions = True
     config.max_n_frames = frames
-    config.evaluation = False
+    config.evaluation = True
     config.render = False
     config.loggers = ["csv"]
     config.create_json = False
+    config.evaluation_interval = evaluation_interval
+    config.evaluation_episodes = evaluation_episodes
+    config.evaluation_deterministic_actions = True
+    config.evaluation_static = False
     config.save_folder = str(Path(output_dir).resolve())
     config.checkpoint_at_end = True
     config.checkpoint_interval = 0
@@ -44,7 +58,14 @@ def make_experiment(
     algorithm.share_param_critic = True
     model = MlpConfig.get_from_yaml()
     critic = MlpConfig.get_from_yaml()
-    return experiment_class(
+    validation_seed = 100_000 + seed if validation_seed is None else validation_seed
+    evaluation_callback = EpisodeEvaluationCallback(
+        Path(output_dir) / "evaluation" / "validation_episodes.jsonl",
+        task_name=task_name,
+        validation_seed=validation_seed,
+    )
+    callbacks = list(callbacks or []) + [evaluation_callback]
+    experiment = experiment_class(
         task=make_task(task_name),
         algorithm_config=algorithm,
         model_config=model,
@@ -54,6 +75,118 @@ def make_experiment(
         callbacks=callbacks,
         **(experiment_kwargs or {}),
     )
+    experiment.test_env.set_seed(validation_seed)
+    experiment.run_manifest_path = Path(output_dir) / "manifest.json"
+    experiment.run_metadata = {
+        "method": method,
+        "task": task_name,
+        "source_tasks": list(source_tasks or []),
+        "target_task": task_name,
+        "training_seed": int(seed),
+        "validation_seed": int(validation_seed),
+        "final_test_seed_base": 900_000,
+        "total_environment_frames": int(frames),
+        "evaluation_episode_count": int(evaluation_episodes),
+        "evaluation_interval_environment_frames": int(evaluation_interval),
+        "checkpoint_path": str(
+            experiment.folder_name / "checkpoints" / f"checkpoint_{frames}.pt"
+        ),
+        "policy_initialization": policy_initialization,
+        "model_configuration": {
+            "actor": _plain_config(model),
+            "critic": _plain_config(critic),
+            "algorithm": _plain_config(algorithm),
+        },
+        "dependency_revisions": dependency_revisions(),
+    }
+    write_run_manifest(experiment, completed=False)
+    return experiment
+
+
+def _plain_config(config):
+    return {key: str(value) for key, value in vars(config).items()}
+
+
+def dependency_revisions():
+    """Return installed source revisions without changing dependencies."""
+    revisions = {"repository": _git_revision(Path(__file__).resolve().parents[1])}
+    for name in ("benchmarl", "vmas"):
+        module_path = Path(importlib.import_module(name).__file__).resolve()
+        revisions[name] = _git_revision(module_path)
+    return revisions
+
+
+def _git_revision(path):
+    root = path if path.is_dir() else path.parent
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unavailable"
+
+
+def write_run_manifest(experiment, completed=True, extra=None):
+    """Write run settings and the final observed environment-frame count."""
+    metadata = dict(getattr(experiment, "run_metadata", {}))
+    metadata["status"] = "complete" if completed else "running"
+    metadata["observed_environment_frames"] = int(experiment.total_frames)
+    if extra:
+        metadata.update(extra)
+    path = Path(getattr(experiment, "run_manifest_path", experiment.folder_name / "manifest.json"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, indent=2, default=str) + "\n")
+    return path
+
+
+def write_episode_records(path, records, **metadata):
+    """Write raw episode dictionaries as JSON Lines with common run fields."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as output:
+        for record in records:
+            output.write(json.dumps({**metadata, **record}, default=str) + "\n")
+    return path
+
+
+class EpisodeEvaluationCallback(Callback):
+    """Save one raw record per validation episode at the actual frame count."""
+
+    def __init__(self, output_path, task_name, validation_seed):
+        super().__init__()
+        self.output_path = Path(output_path)
+        self.task_name = task_name
+        self.validation_seed = int(validation_seed)
+        self.episode_number = 0
+
+    def on_evaluation_end(self, rollouts):
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        env = self.experiment.test_env
+        radii = [agent.shape.radius for agent in env.base_env.scenario.world.agents]
+        with self.output_path.open("a") as output:
+            for rollout in rollouts:
+                record = episode_metrics(
+                    rollout,
+                    radii,
+                    self.experiment.max_steps,
+                    gamma=self.experiment.config.gamma,
+                )
+                record.update(
+                    {
+                        "task": self.task_name,
+                        "method": getattr(self.experiment, "run_metadata", {}).get(
+                            "method", "mappo"
+                        ),
+                        "training_seed": int(self.experiment.seed),
+                        "evaluation_seed": self.validation_seed,
+                        "episode_index": self.episode_number,
+                        "environment_frames": int(self.experiment.total_frames),
+                    }
+                )
+                output.write(json.dumps(record) + "\n")
+                self.episode_number += 1
 
 
 def copy_actor_weights(source_experiment, target_experiment):
@@ -125,39 +258,29 @@ def probe_policy(experiment, task_name, seed, episodes, observation_limit=None):
                 break_when_any_done=False,
             )
         records, observations = [], []
-        # This TorchRL/VMAS build returns [parallel_envs, time]. Split on the
-        # environment dimension so each record represents one full episode.
+        radii = [agent.shape.radius for agent in env.base_env.scenario.world.agents]
+        # This pinned TorchRL/VMAS build returns [parallel_envs, time].
         for episode in rollout.unbind(0):
             obs = episode.get(("next", "agents", "observation"))
-            positions = obs[..., :2]
-            goals = positions - obs[..., 4:6]
-            hits = goal_hits(positions, goals, [0.1, 0.1, 0.1])
-            reward = episode.get(("next", "agents", "reward"))
-            contact = False
-            collision_onsets = 0
-            minimum_clearance = float("inf")
-            for first in range(positions.shape[-2]):
-                for second in range(first + 1, positions.shape[-2]):
-                    clearance = torch.linalg.vector_norm(
-                        positions[..., first, :] - positions[..., second, :], dim=-1
-                    ) - 0.2
-                    contact = contact or bool((clearance <= 0).any().item())
-                    minimum_clearance = min(minimum_clearance, float(clearance.min().item()))
-                    overlaps = clearance <= 0
-                    collision_onsets += int(
-                        (overlaps & ~torch.nn.functional.pad(overlaps[:-1], (1, 0))).sum().item()
-                    )
-            records.append(
+            record = episode_metrics(
+                episode,
+                radii,
+                int(TASK_CONFIG["environment"]["max_steps"]),
+                gamma=experiment.config.gamma,
+            )
+            # Keep concise aliases used by the pilot selector manifests.
+            record.update(
                 {
-                    "return": float(reward.mean(dim=-2).sum().item()),
-                    "success": float(hits.all(dim=-1).any().item()),
-                    "agent_success": hits.any(dim=0).to(torch.float32).tolist(),
-                    "contact": float(contact),
-                    "collision_onsets": collision_onsets,
-                    "minimum_surface_clearance": minimum_clearance,
-                    "length": int(obs.shape[0]),
+                    "return": record["undiscounted_team_return"],
+                    "success": float(record["team_success"]),
+                    "agent_success": record["individual_success"],
+                    "contact": float(record["contact_episode"]),
+                    "collision_onsets": record["collision_event_count"],
+                    "minimum_surface_clearance": record["minimum_surface_clearance"],
+                    "length": record["episode_length"],
                 }
             )
+            records.append(record)
             observations.append(obs.reshape(-1, obs.shape[-1]).detach().cpu())
         all_observations = torch.cat(observations, dim=0)
         if observation_limit is not None:
@@ -180,20 +303,15 @@ def summarize_signals(records):
 
 def summarize_probe(records):
     """Return small evaluation metrics suitable for a run manifest."""
-    agent_success = [torch.as_tensor(row["agent_success"]).reshape(-1) for row in records]
-    agent_count = min(values.numel() for values in agent_success)
-    return {
-        "team_success_rate": sum(row["success"] for row in records) / len(records),
-        "agent_goal_success_rate": [
-            sum(float(values[agent]) for values in agent_success) / len(records)
-            for agent in range(agent_count)
-        ],
-        "mean_return": sum(row["return"] for row in records) / len(records),
-        "mean_episode_length": sum(row["length"] for row in records) / len(records),
-        "contact_episode_fraction": sum(row["contact"] for row in records) / len(records),
-        "mean_collision_onsets": sum(row["collision_onsets"] for row in records) / len(records),
-        "mean_minimum_surface_clearance": sum(row["minimum_surface_clearance"] for row in records) / len(records),
-        "collision_measure": "physical contact when pairwise surface clearance <= 0",
-        "vmas_penalty_threshold": "Navigation min_collision_distance=0.005 center distance",
-        "episodes": len(records),
-    }
+    summary = summarize_episodes(records)
+    summary.update(
+        {
+            "agent_goal_success_rate": summary["individual_success_rate"],
+            "mean_return": summary["mean_undiscounted_team_return"],
+            "mean_minimum_surface_clearance": summary[
+                "mean_minimum_surface_clearance"
+            ],
+            "mean_collision_onsets": summary["collision_events_per_episode"],
+        }
+    )
+    return summary

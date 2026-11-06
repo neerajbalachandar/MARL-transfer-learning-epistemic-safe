@@ -15,8 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from benchmarl.experiment.experiment import Experiment
-from evaluation.metrics import summarize_episodes
-from evaluation.success_rate import goal_hits
+from evaluation.metrics import episode_metrics, summarize_episodes
 
 
 def load_experiment(checkpoint, save_folder):
@@ -131,38 +130,13 @@ def evaluate_seed(experiment, seed, episode_count, render=False):
                 callback=render_frame if render else None,
             )
 
-        episodes = []
-        for episode_trajectory in trajectory.unbind(0):
+        episode_records = []
+        for episode_index, episode_trajectory in enumerate(trajectory.unbind(0)):
             length = first_end_index(episode_trajectory)
             data = episode_trajectory[:length]
-            observations = data.get(("next", "agents", "observation"))
-            positions = observations[..., :2]
-            goals = positions - observations[..., 4:6]
-            hits = goal_hits(positions, goals, radii)
-            initial_observation = data.get(("agents", "observation"))[:1]
-            initial_position = initial_observation[..., :2]
-            initial_goal = initial_position - initial_observation[..., 4:6]
-            positions = torch.cat((initial_position, positions), dim=0)
-            hits = torch.cat((goal_hits(initial_position, initial_goal, radii), hits), dim=0)
-            rewards = data.get(("next", "agents", "reward"))
-            truncated = data.get(("next", "truncated"), None)
-            explicit_timeout = (
-                bool(truncated[-1].any().item()) if truncated is not None else False
-            )
-            team_success = bool(hits.all(dim=-1).any().item())
-            timed_out = explicit_timeout or (
-                length >= experiment.max_steps and not team_success
-            )
-            episodes.append(
-                {
-                    "positions": positions.detach().cpu(),
-                    "goal_hits": hits.detach().cpu(),
-                    "team_success": team_success,
-                    "return": float(rewards.mean(dim=-2).sum().item()),
-                    "length": length,
-                    "timeout": timed_out,
-                }
-            )
+            record = episode_metrics(data, radii, experiment.max_steps)
+            record.update({"episode_index": episode_index, "evaluation_seed": seed})
+            episode_records.append(record)
 
         if positions_for_video:
             from PIL import Image, ImageDraw
@@ -170,15 +144,19 @@ def evaluate_seed(experiment, seed, episode_count, render=False):
 
             final = Image.fromarray(positions_for_video[-1])
             draw = ImageDraw.Draw(final)
-            result = "Episode complete" if episodes[0]["team_success"] else "Episode timeout"
+            result = (
+                "Episode complete"
+                if episode_records[0]["team_success"]
+                else "Episode timeout"
+            )
             draw.rectangle((5, 5, 180, 28), fill="white")
             draw.text((10, 9), result, fill="black")
             positions_for_video[-1] = np.asarray(final)
 
-        metrics = summarize_episodes(episodes, scenario.min_collision_distance)
+        metrics = summarize_episodes(episode_records)
         metrics["seed"] = seed
         metrics["training_frames"] = int(experiment.total_frames)
-        return metrics, positions_for_video
+        return metrics, episode_records, positions_for_video
     finally:
         env.close()
 
@@ -190,6 +168,15 @@ def save_metrics(rows, path):
         writer = csv.DictWriter(output, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def save_episode_records(rows, path):
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as output:
+        for row in rows:
+            output.write(json.dumps(row) + "\n")
 
 
 def save_video(frames, path):
@@ -253,16 +240,18 @@ def main():
             raise SystemExit("--episodes must be at least 1")
 
         rows = []
+        all_episode_records = []
         try:
             for index, seed in enumerate(seeds):
-                result, frames = evaluate_seed(
+                result, episode_records, frames = evaluate_seed(
                     experiment, seed, episode_count, render=args.render and index == 0
                 )
                 rows.append(result)
+                all_episode_records.extend(episode_records)
                 print(
                     f"seed={seed}: team_success={result['team_success_rate']:.3f}, "
-                    f"collisions={result['collision_events']}, "
-                    f"mean_return={result['mean_episode_return']:.3f}"
+                    f"collision_episodes={result['collision_episode_fraction']:.3f}, "
+                    f"mean_return={result['mean_undiscounted_team_return']:.3f}"
                 )
                 if args.render and index == 0:
                     video_path = (
@@ -277,7 +266,10 @@ def main():
             experiment.close()
 
     save_metrics(rows, output)
+    episode_output = output.with_name(output.stem.replace("_metrics", "_episodes") + ".jsonl")
+    save_episode_records(all_episode_records, episode_output)
     print(f"Metrics saved to {output}")
+    print(f"Per-episode records saved to {episode_output}")
 
 
 if __name__ == "__main__":

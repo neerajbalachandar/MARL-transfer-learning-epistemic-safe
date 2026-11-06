@@ -21,8 +21,18 @@ from transfer.experiment import (
     probe_policy,
     summarize_probe,
     summarize_signals,
+    write_episode_records,
+    write_run_manifest,
 )
-from transfer.methods import bayes_update, bpr_expected_improvement, signal_log_likelihood
+from transfer.methods import (
+    bayes_update,
+    belief_information_gain,
+    bpr_expected_improvement,
+    calibrated_bayes_update,
+    joint_signal_log_likelihood,
+    signal_log_likelihood,
+    summarize_joint_signals,
+)
 from transfer.navigation import EXPERIMENTS
 
 
@@ -35,6 +45,10 @@ def main():
     parser.add_argument("--probe-episodes", type=int, default=20)
     parser.add_argument("--frames", type=int, default=600_000)
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument("--eval-interval", type=int, default=120_000)
+    parser.add_argument("--validation-episodes", type=int, default=32)
+    parser.add_argument("--validation-seed", type=int, default=None)
+    parser.add_argument("--likelihood", choices=("factorized", "joint"), default="factorized")
     parser.add_argument("--source-eval-episodes", type=int, default=100)
     parser.add_argument("--source-success-threshold", type=float, default=0.8)
     parser.add_argument("--output", type=Path, default=None)
@@ -66,15 +80,19 @@ def main():
         # Estimate P(signal | transfer affinity, selected source policy) from
         # held-out T1a/T1b episodes. The final target probes use separate seeds.
         models = []
+        joint_models = []
         for source_index, experiment in enumerate(experiments):
             policy_models = []
+            policy_joint_models = []
             for hypothesis_index, task in enumerate(source_tasks):
                 rows, _ = probe_policy(
                     experiment, task, 100_000 + args.seed + hypothesis_index,
                     args.probe_episodes,
                 )
                 policy_models.append(summarize_signals(rows))
+                policy_joint_models.append(summarize_joint_signals(rows))
             models.append(policy_models)
+            joint_models.append(policy_joint_models)
         source_success = []
         for source_index, task in enumerate(source_tasks):
             rows, _ = probe_policy(
@@ -96,11 +114,17 @@ def main():
                 experiment, method["target_task"], 200_000 + args.seed, args.probe_episodes
             )
             for episode_index, row in enumerate(rows):
+                likelihood_fn = (
+                    signal_log_likelihood
+                    if args.likelihood == "factorized"
+                    else joint_signal_log_likelihood
+                )
+                selected_models = models if args.likelihood == "factorized" else joint_models
                 likelihood = torch.stack(
-                    [signal_log_likelihood(row, models[source_index][h]) for h in range(2)]
+                    [likelihood_fn(row, selected_models[source_index][h]) for h in range(2)]
                 ).to(torch.float64)
                 prior = belief.clone()
-                belief = bayes_update(belief, likelihood)
+                belief = calibrated_bayes_update(belief, likelihood)
                 probes.append(
                     {
                         "source": source_index,
@@ -109,6 +133,8 @@ def main():
                         "prior": prior.tolist(),
                         "log_likelihood": likelihood.tolist(),
                         "posterior": belief.tolist(),
+                        "information_gain_nats": belief_information_gain(prior, belief),
+                        "probe_budget_episodes": len(probes) + 1,
                     }
                 )
 
@@ -140,13 +166,24 @@ def main():
             selected = max(range(2), key=lambda index: oracle_returns[index])
 
         target = make_experiment(
-            method["target_task"], args.seed, args.frames, args.output, args.device
+            method["target_task"],
+            args.seed,
+            args.frames,
+            args.output,
+            args.device,
+            method=f"bpr_{args.selection}_{args.likelihood}",
+            source_tasks=source_tasks,
+            policy_initialization=f"actor_only:{source_tasks[selected]}",
+            evaluation_interval=args.eval_interval,
+            evaluation_episodes=args.validation_episodes,
+            validation_seed=args.validation_seed,
         )
         run_completed = False
         try:
             copy_actor_weights(experiments[selected], target)
             manifest = {
-                "method": args.selection,
+                "method": f"bpr_{args.selection}_{args.likelihood}",
+                "selection_condition": args.selection,
                 "task": method["target_task"],
                 "selected_source": source_tasks[selected],
                 "transfer_mapping": {
@@ -160,6 +197,13 @@ def main():
                 "prior": [0.5, 0.5],
                 "final_posterior": belief.tolist(),
                 "validation_models": models,
+                "joint_validation_models": joint_models,
+                "likelihood_model": args.likelihood,
+                "likelihood_misspecification_note": (
+                    "factorized Gaussian/Bernoulli baseline assumes conditional independence"
+                    if args.likelihood == "factorized"
+                    else "joint categorical success/contact and conditional Gaussian return model"
+                ),
                 "probe_episodes_per_candidate": args.probe_episodes,
                 "probe_frames": 2 * args.probe_episodes * 100,
                 "oracle_validation_frames": (
@@ -185,6 +229,17 @@ def main():
                 target, method["target_task"], 900_000 + args.seed, args.eval_episodes
             )
             manifest["final_evaluation"] = summarize_probe(final_records)
+            write_episode_records(
+                args.output / "evaluation" / "test_episodes.jsonl",
+                final_records,
+                method=manifest["method"],
+                task=method["target_task"],
+                training_seed=args.seed,
+                evaluation_seed=900_000 + args.seed,
+                environment_frames=int(target.total_frames),
+                split="test",
+            )
+            write_run_manifest(target, completed=True, extra=manifest)
             manifest["target_training_frames"] = int(target.total_frames)
             manifest["held_out_evaluation_frames"] = args.eval_episodes * 100
             manifest["total_target_interaction_frames"] = (
