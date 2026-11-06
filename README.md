@@ -106,6 +106,15 @@ python experiments/transfer_bayesian_reuse.py \
 python experiments/transfer_portal.py --mode portal
 ```
 
+If a PORTAL run stops after training its initial T0 stage, continue from that saved stage checkpoint without retraining it:
+
+```bash
+python experiments/transfer_portal.py --mode portal \
+  --resume-checkpoint outputs/portal/seed_0/stage_0_T0/<run>/checkpoints/checkpoint_600000.pt
+```
+
+The resumed run repeats the small T0 evaluation, selects the next task, and continues the remaining curriculum stages.
+
 BenchMARL places each checkpoint in a generated run folder under the output directory. Find the exact path with `find outputs -name 'checkpoint_*.pt'`. All transfer runners accept `--frames`, `--seed`, `--output`, and `--device`; the Bayesian runner also accepts `--selection bayes|random|fixed-a|fixed-b|oracle`. The portal runner supports `portal`, `difficulty`, `manual`, and `scratch` comparisons. They write a `manifest.json` and a compact held-out `evaluation.json` beside their run logs.
 
 The implementation is deliberately a first pilot. The MAPTF runner uses a frozen peer actor library, a simple online return bandit and a learned reward-change termination classifier. This is labeled MAPTF-style because it does not port the paper's SRO option-value update or execute temporally extended environment options. Bayesian reuse uses return/success/contact likelihoods and a BPR expected-improvement selector; it is not Bayes-ToMoP. PORTAL uses fixed-dimension Gaussian mixtures and actor-only transfer; ERFN is not included. Portal stages currently use fixed frame caps and record competence scores rather than implementing the paper's two-consecutive-evaluation stopping rule. These limits are included in each run manifest.

@@ -125,6 +125,8 @@ def probe_policy(experiment, task_name, seed, episodes, observation_limit=None):
                 break_when_any_done=False,
             )
         records, observations = [], []
+        # This TorchRL/VMAS build returns [parallel_envs, time]. Split on the
+        # environment dimension so each record represents one full episode.
         for episode in rollout.unbind(0):
             obs = episode.get(("next", "agents", "observation"))
             positions = obs[..., :2]
@@ -149,7 +151,7 @@ def probe_policy(experiment, task_name, seed, episodes, observation_limit=None):
                 {
                     "return": float(reward.mean(dim=-2).sum().item()),
                     "success": float(hits.all(dim=-1).any().item()),
-                    "agent_success": hits.any(dim=0).to(torch.float32).mean(dim=0).tolist(),
+                    "agent_success": hits.any(dim=0).to(torch.float32).tolist(),
                     "contact": float(contact),
                     "collision_onsets": collision_onsets,
                     "minimum_surface_clearance": minimum_clearance,
@@ -178,11 +180,13 @@ def summarize_signals(records):
 
 def summarize_probe(records):
     """Return small evaluation metrics suitable for a run manifest."""
+    agent_success = [torch.as_tensor(row["agent_success"]).reshape(-1) for row in records]
+    agent_count = min(values.numel() for values in agent_success)
     return {
         "team_success_rate": sum(row["success"] for row in records) / len(records),
         "agent_goal_success_rate": [
-            sum(row["agent_success"][agent] for row in records) / len(records)
-            for agent in range(len(records[0]["agent_success"]))
+            sum(float(values[agent]) for values in agent_success) / len(records)
+            for agent in range(agent_count)
         ],
         "mean_return": sum(row["return"] for row in records) / len(records),
         "mean_episode_length": sum(row["length"] for row in records) / len(records),

@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from transfer.experiment import (
     checkpoint_hash,
     copy_actor_weights,
+    load_source_experiment,
     make_experiment,
     probe_policy,
     summarize_probe,
@@ -38,6 +39,12 @@ def main():
         help="Use pilot-frozen moderate return bounds for main seeds",
     )
     parser.add_argument("--components", type=int, default=5)
+    parser.add_argument(
+        "--resume-checkpoint",
+        type=Path,
+        default=None,
+        help="Reuse a trained checkpoint for the initial task and continue the curriculum",
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
@@ -62,12 +69,23 @@ def main():
     while task_sequence:
         task_name = task_sequence.pop(0)
         stage_dir = args.output / f"stage_{stage}_{task_name}"
-        experiment = make_experiment(
-            task_name, args.seed, args.frames_per_stage, stage_dir, args.device
-        )
-        if previous is not None:
-            copy_actor_weights(previous, experiment)
-        experiment.run()
+        resume_this_stage = args.resume_checkpoint is not None and stage == 0
+        if resume_this_stage:
+            if task_name != method["initial_task"]:
+                raise SystemExit("--resume-checkpoint can only resume the initial curriculum task")
+            if not args.resume_checkpoint.is_file():
+                raise SystemExit(f"Checkpoint not found: {args.resume_checkpoint}")
+            experiment = load_source_experiment(
+                args.resume_checkpoint, args.output / "resume_loaded_checkpoint"
+            )
+            previous_checkpoint = args.resume_checkpoint
+        else:
+            experiment = make_experiment(
+                task_name, args.seed, args.frames_per_stage, stage_dir, args.device
+            )
+            if previous is not None:
+                copy_actor_weights(previous, experiment)
+            experiment.run()
         stage_info = {
             "task": task_name,
             "training_frames": int(experiment.total_frames),
@@ -85,7 +103,8 @@ def main():
         stage_info["competence_evaluation_frames"] = args.competence_episodes * 100
 
         if task_name == method["target_task"]:
-            previous_checkpoint = experiment.folder_name / "checkpoints" / f"checkpoint_{experiment.total_frames}.pt"
+            if not resume_this_stage:
+                previous_checkpoint = experiment.folder_name / "checkpoints" / f"checkpoint_{experiment.total_frames}.pt"
             stage_info["checkpoint"] = str(previous_checkpoint)
             stage_info["checkpoint_sha256"] = checkpoint_hash(previous_checkpoint)
             previous = experiment
@@ -166,7 +185,8 @@ def main():
             }
         )
         history.append(stage_info)
-        previous_checkpoint = experiment.folder_name / "checkpoints" / f"checkpoint_{experiment.total_frames}.pt"
+        if not resume_this_stage:
+            previous_checkpoint = experiment.folder_name / "checkpoints" / f"checkpoint_{experiment.total_frames}.pt"
         stage_info["checkpoint"] = str(previous_checkpoint)
         stage_info["checkpoint_sha256"] = checkpoint_hash(previous_checkpoint)
         previous = experiment
