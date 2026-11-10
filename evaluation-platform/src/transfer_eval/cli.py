@@ -284,6 +284,7 @@ def _make_analysis(data: dict[str, list[dict]], metric_specs: dict, threshold: f
         run = runs.get(row.get("run_id"), {})
         row["method_id"] = run.get("method_id")
         row["benchmark_id"] = run.get("benchmark_id")
+        row["condition"] = run.get("condition")
     curves = curve_summary(seed_rows)
     efficiency = efficiency_table(seed_rows, {k: v.get("normalized_budget") for k, v in metric_specs.items() if v.get("normalized_budget")}, threshold)
     for row in efficiency:

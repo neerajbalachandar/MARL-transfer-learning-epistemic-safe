@@ -16,6 +16,7 @@ def curve_summary(seed_rows: list[dict], confidence: float = 0.95, resamples: in
         key = (row.get("metric_name"), row.get("source_condition"), row.get("target_condition"),
                row.get("native_unit"), step, row.get("split"), row.get("method_id"),
                row.get("benchmark_id"), row.get("unit"), row.get("benchmark_semantics_id"))
+        key = (*key, row.get("condition"))
         groups[key].setdefault((row.get("run_id"), row.get("seed")), []).append(float(row["seed_value"]))
     output = []
     for key, by_seed in sorted(groups.items(), key=lambda pair: (str(pair[0][0]), str(pair[0][1]), str(pair[0][2]), pair[0][4])):
@@ -27,7 +28,7 @@ def curve_summary(seed_rows: list[dict], confidence: float = 0.95, resamples: in
                        "per_seed": [{"run_id": identity[0], "seed": identity[1], "value": sum(samples) / len(samples)}
                                     for identity, samples in by_seed.items()],
                        "method_id": key[6], "benchmark_id": key[7], "unit": key[8],
-                       "benchmark_semantics_id": key[9]})
+                       "benchmark_semantics_id": key[9], "condition": key[10]})
     return output
 
 

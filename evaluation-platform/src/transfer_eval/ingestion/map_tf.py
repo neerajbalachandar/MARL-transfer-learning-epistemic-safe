@@ -22,7 +22,8 @@ class MapTFAdapter(BaseAdapter):
         metadata = {
             "method_id": f"maptf_{algorithm or 'unknown'}",
             "transfer_axis": "intra_population_transfer",
-            "condition": "native_configured_run",
+            "condition": ("adversary_option_enabled" if raw.get("adv_use_option") is True else
+                          "adversary_option_disabled" if raw.get("adv_use_option") is False else "native_configured_run"),
             "ablation": None,
             "native_framework": "TensorFlow 1.x",
             "simulator": {"particle": "MPE particle world", "pacman": "Pacman"}.get(game, game),
@@ -32,7 +33,7 @@ class MapTFAdapter(BaseAdapter):
             "benchmark_id": f"legacy_{game}_{scenario}" if game and scenario else None,
             "source_condition": raw.get("source_condition"),
             "target_condition": scenario,
-            "changed_factors": {},
+            "changed_factors": {"adv_use_option": raw.get("adv_use_option")},
             "n_agents_source": None,
             "n_agents_target": raw.get("n_agents"),
             "agent_types": None,
@@ -83,6 +84,11 @@ class MapTFAdapter(BaseAdapter):
                 payload = {key: values[episode_index] for key, values in raw.items() if isinstance(values, list) and episode_index < len(values)}
                 scalar_metrics: dict[str, Any] = {}
                 for key, value in payload.items():
+                    # These are record structure or success flags, not reward
+                    # curves. Preserve them in native_record, but do not plot
+                    # episode indices or episode lengths as performance.
+                    if key in {"episode", "step", "win"}:
+                        continue
                     if isinstance(value, list):
                         for i, component in enumerate(value):
                             num = finite_number(component)
@@ -95,10 +101,11 @@ class MapTFAdapter(BaseAdapter):
                 bundle.episodes.append({
                     "run_id": run["run_id"], "seed": run.get("seed_train"), "episode_index": episode_index,
                     "split": "training_or_native_eval_unknown", "source_condition": run.get("source_condition"),
-                    "target_condition": run.get("target_condition"), "checkpoint_step": None,
+                    "target_condition": run.get("target_condition"), "checkpoint_step": episode_index,
                     "native_unit": "episodes", "source_file": path.relative_to(repository_root).as_posix(),
                     "source_sha256": checksum, "metrics": scalar_metrics,
-                    "extensions": {"native_record": payload, "semantics_unresolved": True},
+                    "extensions": {"native_record": payload, "semantics_unresolved": True,
+                                   "condition": run.get("condition")},
                 })
                 for metric_name, value in scalar_metrics.items():
                     bundle.metrics.append({
@@ -107,8 +114,11 @@ class MapTFAdapter(BaseAdapter):
                         "aggregation_level": "native_episode_record", "benchmark_semantics_id": run.get("benchmark_id"),
                         "source_file": path.relative_to(repository_root).as_posix(), "source_sha256": checksum,
                         "source_condition": run.get("source_condition"), "target_condition": run.get("target_condition"),
-                        "checkpoint_step": None, "native_unit": "episodes", "missing_reason": None,
-                        "extensions": {"native_field": metric_name.removeprefix("native_")},
+                        "checkpoint_step": episode_index, "native_unit": "episodes", "missing_reason": None,
+                        "extensions": {"native_field": metric_name.removeprefix("native_"),
+                                       "episode_index": episode_index,
+                                       "split": "training_or_native_eval_unknown",
+                                       "condition": run.get("condition")},
                     })
             bundle.artifacts.append({"run_id": run["run_id"], "artifact_type": "native_metric_export", "path": path.relative_to(repository_root).as_posix(), "format": "json", "sha256": checksum, "aggregation_level": "run", "exists": True})
         return bundle

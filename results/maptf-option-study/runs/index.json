@@ -1,0 +1,28 @@
+[
+  {
+    "candidate_identity": {
+      "algorithm": "multi_ppo",
+      "game": "particle",
+      "native_path": "2026-11-10_15-42-54/args.json",
+      "scenario": "simple_tag",
+      "seed": 1234
+    },
+    "category": "map_tf",
+    "method_id": "maptf_multi_ppo",
+    "run_id": "map_tf-1f50dc7ebe0553fda10c",
+    "source_file": null
+  },
+  {
+    "candidate_identity": {
+      "algorithm": "multi_ppo",
+      "game": "particle",
+      "native_path": "2026-11-10_16-02-56/args.json",
+      "scenario": "simple_tag",
+      "seed": 1234
+    },
+    "category": "map_tf",
+    "method_id": "maptf_multi_ppo",
+    "run_id": "map_tf-68a26b929235c067870b",
+    "source_file": null
+  }
+]

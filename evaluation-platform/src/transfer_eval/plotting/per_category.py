@@ -22,13 +22,14 @@ def plot_learning_curves(seed_rows: list[dict], output: Path, category: str) -> 
     output.mkdir(parents=True, exist_ok=True)
     created = []
     for (method, benchmark, semantics, metric_name), points in sorted(groups.items(), key=lambda pair: str(pair[0])):
-        preferred = "validation" if any(p.get("split") == "validation" for p in points) else "test"
-        points = [p for p in points if p.get("split") in (preferred, None)]
+        preferred = ("validation" if any(p.get("split") == "validation" for p in points) else
+                     "test" if any(p.get("split") == "test" for p in points) else None)
+        points = [p for p in points if p.get("split") == preferred] if preferred is not None else points
         if not points:
             continue
         by_target = {}
         for row in points:
-            label = f"{row.get('source_condition') or 'source unspecified'} → {row.get('target_condition') or 'target unspecified'}"
+            label = f"{row.get('condition') or 'condition unspecified'} · {row.get('source_condition') or 'source unspecified'} → {row.get('target_condition') or 'target unspecified'}"
             by_target.setdefault(label, []).append(row)
         fig, ax = plt.subplots(figsize=(7.5, 4.5))
         for target, rows in sorted(by_target.items()):
@@ -44,7 +45,8 @@ def plot_learning_curves(seed_rows: list[dict], output: Path, category: str) -> 
         ax.set_ylabel(f"{metric_name} ({value_unit})")
         if metric_name == "vmas_assigned_goal_team_success":
             ax.set_ylim(-0.03, 1.03)
-        ax.set_title(f"{method or category} / {benchmark}\n{metric_name} ({semantics}); {preferred}")
+        split_label = preferred or "native split unknown"
+        ax.set_title(f"{method or category} / {benchmark}\n{metric_name} ({semantics}); {split_label}")
         ax.legend(loc="best", fontsize="small")
         ax.grid(alpha=0.25)
         fig.tight_layout()
