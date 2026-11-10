@@ -1,0 +1,1 @@
+{"profiles": {"default": {"confidence_level": 0.95, "bootstrap_resamples": 10000, "random_seed": 1729, "learning_curve_metric": "vmas_assigned_goal_team_success", "learning_curve_x_unit": "environment_frames", "figure_dpi": 160}}}

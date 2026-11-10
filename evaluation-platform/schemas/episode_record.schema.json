@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Normalized evaluation episode record",
+  "type": "object",
+  "required": ["run_id", "seed", "episode_index", "split", "source_condition", "target_condition", "checkpoint_step", "native_unit", "source_file", "source_sha256", "metrics", "extensions"],
+  "properties": {
+    "run_id": {"type": "string"}, "seed": {"type": ["integer", "null"]},
+    "episode_index": {"type": ["integer", "null"]}, "split": {"type": "string"},
+    "checkpoint_step": {"type": ["number", "null"]}, "native_unit": {"type": ["string", "null"]},
+    "source_file": {"type": "string"}, "source_sha256": {"type": "string"},
+    "metrics": {"type": "object"}, "extensions": {"type": "object"}
+  },
+  "additionalProperties": true
+}

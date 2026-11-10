@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Artifact provenance record",
+  "type": "object",
+  "required": ["run_id", "artifact_type", "path", "format", "sha256", "aggregation_level", "exists"],
+  "properties": {
+    "run_id": {"type": "string"}, "artifact_type": {"type": "string"},
+    "path": {"type": "string"}, "format": {"type": ["string", "null"]},
+    "sha256": {"type": ["string", "null"]}, "aggregation_level": {"type": ["string", "null"]},
+    "exists": {"type": "boolean"}
+  },
+  "additionalProperties": true
+}

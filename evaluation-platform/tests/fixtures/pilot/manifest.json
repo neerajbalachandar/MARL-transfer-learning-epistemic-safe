@@ -1,0 +1,1 @@
+{"method":"mappo","method_id":"mappo","task":"T2","training_seed":7,"validation_seed":9,"target_training_frames":1200,"simulator":"VMAS","dependency_revisions":{"vmas":"test-revision"}}

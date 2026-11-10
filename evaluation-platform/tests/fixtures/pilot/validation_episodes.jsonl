@@ -1,0 +1,2 @@
+{"task":"T2","training_seed":7,"evaluation_seed":9,"environment_frames":600,"team_success":true,"individual_success":[true,true,true],"undiscounted_team_return":5.0,"episode_length":50,"timeout":false,"collision_event_count":0,"contact_episode":false,"minimum_surface_clearance":0.1}
+{"task":"T2","training_seed":7,"evaluation_seed":10,"environment_frames":600,"team_success":false,"individual_success":[true,false,true],"undiscounted_team_return":-1.0,"episode_length":100,"timeout":true,"collision_event_count":1,"contact_episode":true,"minimum_surface_clearance":-0.01}

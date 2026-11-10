@@ -1,0 +1,1 @@
+{"method_id":"portal_test_fixture","transfer_axis":"task_transfer","implementation_status":"partial","benchmark_id":"synthetic_smac_fixture","native_framework":"PyTorch","simulator":"SMAC","scenario_id":"5m_vs_6m","source_condition":"5m","target_condition":"5m_vs_6m","seed_train":7,"seed_env":11,"phase_interactions":{"target_adaptation":{"value":1000,"unit":"environment_steps"}}}

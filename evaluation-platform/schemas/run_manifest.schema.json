@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/transfer-eval/run-manifest.schema.json",
+  "title": "Normalized transfer experiment run manifest",
+  "type": "object",
+  "required": ["schema_version", "run_id", "method_id", "transfer_axis", "condition", "ablation", "implementation_status", "implementation_type", "repository_url", "repository_path", "commit_sha", "dirty_tree", "patch_id", "submodule_shas", "upstream_commit_sha", "native_framework", "simulator", "simulator_version", "scenario_id", "map_id", "benchmark_id", "source_condition", "target_condition", "changed_factors", "n_agents_source", "n_agents_target", "agent_types", "observation_schema", "action_schema", "reward_definition_id", "termination_definition_id", "information_model", "algorithm", "architecture", "optimizer", "hyperparameters_path", "checkpoint_path", "checkpoint_sha256", "seed_train", "seed_env", "validation_seed_set", "test_seed_set", "checkpoint_selection_rule", "phase_interactions", "phase_wall_time_seconds", "hardware_software", "artifacts", "missing_reason", "extensions"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "method_id": {"type": "string", "minLength": 1},
+    "transfer_axis": {"type": ["string", "null"]},
+    "condition": {"type": ["string", "null"]},
+    "ablation": {"type": ["string", "null"]},
+    "implementation_status": {"enum": ["implemented", "partial", "planned", "external_reference", "not_implemented"]},
+    "implementation_type": {"type": "string", "minLength": 1},
+    "dirty_tree": {"type": ["boolean", "null"]},
+    "submodule_shas": {"type": "object"},
+    "changed_factors": {"type": "object"},
+    "agent_types": {"type": ["array", "null"]},
+    "information_model": {"type": "object"},
+    "phase_interactions": {"type": "object"},
+    "phase_wall_time_seconds": {"type": "object"},
+    "hardware_software": {"type": "object"},
+    "artifacts": {"type": "array"},
+    "missing_reason": {"type": "object"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": true
+}

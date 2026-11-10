@@ -1,0 +1,3 @@
+# Normalized runs, discovery indexes, plots and reports are reproducible outputs.
+/outputs/
+/runs/*.json

@@ -1,0 +1,1 @@
+{"method_id":"gct_marl_fixture","transfer_axis":"population_size","implementation_status":"external_reference","benchmark_id":"synthetic_smac_fixture","simulator":"SMAC","scenario_id":"3m_to_8m","source_condition":"3m","target_condition":"8m","seed_train":1}

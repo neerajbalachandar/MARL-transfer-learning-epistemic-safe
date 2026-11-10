@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/marl-evaluation/experiment-bundle.schema.json",
+  "title": "MARL experiment interchange manifest",
+  "type": "object",
+  "required": ["schema_version", "run_id", "method_id", "implementation_status", "implementation_type", "environment", "task", "transfer_setting", "agent_population", "configuration", "seeds", "training_budget", "provenance", "metric_definitions", "files"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "method_id": {"type": "string", "minLength": 1},
+    "implementation_status": {"enum": ["implemented", "partial", "planned", "external_reference", "not_implemented"]},
+    "implementation_type": {"type": "string", "minLength": 1},
+    "environment": {"type": "object"},
+    "task": {"type": "object"},
+    "transfer_setting": {"type": "object"},
+    "agent_population": {"type": "object"},
+    "configuration": {"type": "object"},
+    "seeds": {"type": "object"},
+    "training_budget": {"type": "object"},
+    "provenance": {"type": "object"},
+    "metric_definitions": {"type": "object"},
+    "files": {"type": "object"}
+  },
+  "additionalProperties": true
+}
