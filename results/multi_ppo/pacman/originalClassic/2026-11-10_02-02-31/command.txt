@@ -1,0 +1,1 @@
+-a multi_ppo -c ppo_conf -g pacman -d pacman_conf game_name=originalClassic num_adversaries=1 adv_load_model=True adv_load_model_path=source/pacman/original/0/model
