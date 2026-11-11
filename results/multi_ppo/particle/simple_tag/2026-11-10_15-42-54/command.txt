@@ -1,1 +1,0 @@
--n 1200 -e 99 -s 1234 -a multi_ppo -c ppo_conf -g particle -d particle_conf game_name=simple_tag num_adversaries=3 num_good=1 adv_use_option=False save_per_episodes=100

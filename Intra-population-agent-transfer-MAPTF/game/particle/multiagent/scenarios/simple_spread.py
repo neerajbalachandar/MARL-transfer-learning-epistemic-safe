@@ -88,7 +88,8 @@ class Scenario(BaseScenario):
     #                 rew -= 1
     #     return rew
     def reward(self, agent, world):
-        # Agents are rewarded based on minimum agent distance to each landmark, penalized for collisions
+        # Each agent is assigned its corresponding landmark, as in the
+        # cooperative-navigation setup used by MAPTF.
         rew = 0
         agentIndex = 0
         for i, a in enumerate(world.agents):
@@ -96,9 +97,11 @@ class Scenario(BaseScenario):
                 agentIndex = i
                 break
         dists = np.sqrt(np.sum(np.square(agent.state.p_pos - world.landmarks[agentIndex].state.p_pos)))
-        # if self.is_collision(agent, world.landmarks[agentIndex]):
-        #     rew = 1
         rew -= dists
+        if agent.collide:
+            for other in world.agents:
+                if other is not agent and self.is_collision(agent, other):
+                    rew -= 1
         return rew
 
     def observation(self, agent, world):

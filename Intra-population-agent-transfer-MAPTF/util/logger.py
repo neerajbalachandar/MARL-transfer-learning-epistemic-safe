@@ -47,21 +47,17 @@ class Logger:
             #print(key, value)
             if type(value) is numpy.ndarray or type(value) is list:
                 R.acquire()
-                if key not in self.keys.keys():
-                    self.keys[key] = 0
-                else:
-                    self.keys[key] += 1
-                #print(type(value), key, value, self.keys[key])
-                self.tb_h_logger(key, value, self.keys[key])
+                # Keep TensorBoard's horizontal axis in training episodes.
+                self.tb_h_logger(key, value, t)
+                # Reward vectors are per-agent returns. Log their sum as the
+                # team return as well, which is the scalar learning curve used
+                # in the MAPTF paper's MPE figures.
+                if key == 'reward_mean':
+                    self.tb_logger('team/reward_mean', float(numpy.sum(value)), t)
                 R.release()
             else:
                 R.acquire()
-                if key not in self.keys.keys():
-                    self.keys[key] = 0
-                else:
-                    self.keys[key] += 1
-                #print(key, value, self.keys[key])
-                self.tb_logger(key, value, self.keys[key])
+                self.tb_logger(key, value, t)
                 R.release()
         else:
             return
